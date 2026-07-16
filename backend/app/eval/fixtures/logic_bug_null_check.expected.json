@@ -1,0 +1,4 @@
+[
+  {"line": 8, "category": "bug", "severity": "high", "label": "null dereference on address"},
+  {"line": 12, "category": "bug", "severity": "high", "label": "null dereference on name"}
+]

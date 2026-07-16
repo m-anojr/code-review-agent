@@ -1,0 +1,4 @@
+[
+  {"line": 12, "category": "bug", "severity": "high", "label": "race condition on shared counter"},
+  {"line": 19, "category": "bug", "severity": "medium", "label": "shared mutable state without lock"}
+]

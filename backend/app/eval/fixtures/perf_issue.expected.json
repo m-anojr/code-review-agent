@@ -1,0 +1,4 @@
+[
+  {"line": 16, "category": "performance", "severity": "medium", "label": "N+1 query pattern"},
+  {"line": 29, "category": "performance", "severity": "low", "label": "string concatenation in loop"}
+]

@@ -1,0 +1,6 @@
+[
+  {"line": 6, "category": "security", "severity": "high", "label": "f-string SQL"},
+  {"line": 13, "category": "security", "severity": "high", "label": ".format() SQL"},
+  {"line": 19, "category": "security", "severity": "high", "label": "%-format SQL"},
+  {"line": 25, "category": "security", "severity": "high", "label": "concat SQL"}
+]

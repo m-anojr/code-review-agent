@@ -1,0 +1,7 @@
+[
+  {"line": 4, "category": "security", "severity": "critical", "label": "hardcoded secret key"},
+  {"line": 11, "category": "security", "severity": "high", "label": "SQL injection"},
+  {"line": 20, "category": "bug", "severity": "high", "label": "comparing plaintext to hash"},
+  {"line": 30, "category": "security", "severity": "high", "label": "SQL injection via % format"},
+  {"line": 32, "category": "bug", "severity": "medium", "label": "bare except with pass"}
+]

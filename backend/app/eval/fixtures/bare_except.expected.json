@@ -1,0 +1,5 @@
+[
+  {"line": 10, "category": "bug", "severity": "medium", "label": "bare except"},
+  {"line": 19, "category": "bug", "severity": "medium", "label": "swallowed exception"},
+  {"line": 27, "category": "bug", "severity": "medium", "label": "swallowed exception"}
+]

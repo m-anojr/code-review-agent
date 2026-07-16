@@ -1,0 +1,4 @@
+[
+  {"line": 7, "category": "bug", "severity": "high", "label": "off-by-one in range"},
+  {"line": 17, "category": "bug", "severity": "medium", "label": "off-by-one in slice"}
+]
