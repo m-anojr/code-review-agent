@@ -4,15 +4,15 @@ A developer tool that analyzes GitHub pull requests and flags bugs, security iss
 
 ## Screenshots
 
-| Diff Analysis | Finding Details |
+| Submit New Review | Code Diff Viewer |
 | :---: | :---: |
-| ![Screenshot 1](screenshots/1.png) | ![Screenshot 2](screenshots/2.png) |
-| **Evaluation Metrics** | **Review List** |
-| ![Screenshot 3](screenshots/3.png) | ![Screenshot 4](screenshots/4.png) |
+| ![Submit Review](screenshots/1.png) | ![Diff View](screenshots/2.png) |
+| **Evaluation Suite** | **Inline AI Findings** |
+| ![Eval Metrics](screenshots/3.png) | ![Inline Findings](screenshots/4.png) |
 
 <br>
 <p align="center">
-  <b>Full Dashboard View</b><br>
+  <b>Reviews Dashboard</b><br>
   <img src="screenshots/5.png" width="100%" />
 </p>
 
@@ -27,14 +27,14 @@ flowchart TD
     
     API --> Engine[Analysis Engine]
     
-    subgraph Engine [Analysis Engine]
+    subgraph EngineSubgraph [Analysis Engine Components]
         Rules["Deterministic Rules<br>Secrets, SQLi, Exceptions"]
         LLM["LLM Review<br>Groq / Gemini / OpenRouter"]
         Rules --> Merge[Merge & Deduplicate]
         LLM --> Merge
     end
     
-    Engine --> DB[(SQLite DB)]
+    EngineSubgraph --> DB[(SQLite DB)]
     DB --> API
 ```
 
