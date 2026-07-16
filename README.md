@@ -20,21 +20,21 @@ A developer tool that analyzes GitHub pull requests and flags bugs, security iss
 
 ```mermaid
 flowchart TD
-    User([User]) --> UI[Frontend (React/Vite)]
-    UI --> API[Backend API (FastAPI)]
-    API --> GitHub[GitHub API]
+    User(["User"]) --> UI["Frontend (React/Vite)"]
+    UI --> API["Backend API (FastAPI)"]
+    API --> GitHub["GitHub API"]
     GitHub --> API
     
-    API --> Engine[Analysis Engine]
+    API --> Engine["Analysis Engine"]
     
-    subgraph EngineSubgraph [Analysis Engine Components]
+    subgraph EngineSubgraph ["Analysis Engine Components"]
         Rules["Deterministic Rules<br>Secrets, SQLi, Exceptions"]
         LLM["LLM Review<br>Groq / Gemini / OpenRouter"]
-        Rules --> Merge[Merge & Deduplicate]
+        Rules --> Merge["Merge & Deduplicate"]
         LLM --> Merge
     end
     
-    EngineSubgraph --> DB[(SQLite DB)]
+    EngineSubgraph --> DB[("SQLite DB")]
     DB --> API
 ```
 
