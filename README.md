@@ -4,13 +4,17 @@ A developer tool that analyzes GitHub pull requests and flags bugs, security iss
 
 ## Screenshots
 
-<div align="center">
-  <img src="screenshots/1.png" width="45%" />
-  <img src="screenshots/2.png" width="45%" />
-  <img src="screenshots/3.png" width="45%" />
-  <img src="screenshots/4.png" width="45%" />
-  <img src="screenshots/5.png" width="80%" />
-</div>
+| Diff Analysis | Finding Details |
+| :---: | :---: |
+| ![Screenshot 1](screenshots/1.png) | ![Screenshot 2](screenshots/2.png) |
+| **Evaluation Metrics** | **Review List** |
+| ![Screenshot 3](screenshots/3.png) | ![Screenshot 4](screenshots/4.png) |
+
+<br>
+<p align="center">
+  <b>Full Dashboard View</b><br>
+  <img src="screenshots/5.png" width="100%" />
+</p>
 
 ## Architecture
 
@@ -24,8 +28,8 @@ flowchart TD
     API --> Engine[Analysis Engine]
     
     subgraph Engine [Analysis Engine]
-        Rules[Deterministic Rules\nSecrets, SQLi, Exceptions]
-        LLM[LLM Review\nGemini 1.5 Flash / OpenRouter]
+        Rules["Deterministic Rules<br>Secrets, SQLi, Exceptions"]
+        LLM["LLM Review<br>Groq / Gemini / OpenRouter"]
         Rules --> Merge[Merge & Deduplicate]
         LLM --> Merge
     end
