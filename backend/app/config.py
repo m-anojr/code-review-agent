@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = ""
 
     # ASSUMPTION: Groq is primary (free, fast), Gemini is fallback.
-    PRIMARY_MODEL: str = "llama-3.3-70b-versatile"
-    FALLBACK_MODEL: str = "gemini-2.0-flash"
+    PRIMARY_MODEL: str = "openai/gpt-oss-120b"
+    FALLBACK_MODEL: str = "qwen/qwen3.6-27b"
 
     # --- Agent ---
     AGENT_MAX_ITERATIONS: int = 5  # Max ReAct loop iterations per file
