@@ -1,9 +1,20 @@
+"""
+Evaluation harness — measures precision/recall of the review engine.
+
+Extended from v1 to support:
+- Agent-based evaluation (not just rules)
+- Labeled eval set format for past PRs
+- Real-world acceptance rate tracking
+- Separate eval for rules-only vs full agent pipeline
+"""
 from __future__ import annotations
 
 import json
 import logging
 import os
+import time
 from pathlib import Path
+from typing import Any
 
 from app.models import (
     EvalReport,
@@ -50,8 +61,14 @@ def _match_finding(finding: Finding, expected: dict, tolerance: int = 3) -> bool
     return line_match and category_match
 
 
-async def run_benchmark() -> EvalReport:
-    """Run the analyzer against all fixtures and compute precision/recall."""
+async def run_benchmark(include_agent: bool = False) -> EvalReport:
+    """
+    Run the analyzer against all fixtures and compute precision/recall.
+
+    Args:
+        include_agent: If True, run full agent pipeline (slower, non-deterministic).
+                      If False, only run deterministic rules (fast, repeatable).
+    """
     analyzer = ReviewAnalyzer()
     fixture_files = sorted(_FIXTURES_DIR.glob("*.py"))
 
@@ -64,8 +81,12 @@ async def run_benchmark() -> EvalReport:
         expected = _load_expected(fixture_path)
         file_diff = _load_fixture_as_diff(fixture_path)
 
-        # only run rule-based checks for eval (LLM results are non-deterministic)
-        findings = analyzer._run_rules(file_diff)
+        if include_agent:
+            # Full pipeline: rules + agent
+            findings = await analyzer.analyze([file_diff])
+        else:
+            # Rules only: fast, deterministic, repeatable
+            findings = analyzer._run_rules(file_diff)
 
         matched_expected: set[int] = set()
         matched_findings: set[int] = set()
@@ -119,3 +140,103 @@ async def run_benchmark() -> EvalReport:
         total_fixtures=len(fixture_files),
         details=details,
     )
+
+
+# ---------------------------------------------------------------------------
+# Labeled eval set format
+# ---------------------------------------------------------------------------
+
+EVAL_SET_FORMAT = """
+## Labeled Eval Set Format
+
+Each eval case is a pair of files in the fixtures/ directory:
+  - `<name>.py` — The source code to review
+  - `<name>.expected.json` — The ground-truth findings
+
+### Expected JSON format:
+```json
+[
+    {
+        "line": 5,
+        "category": "security",
+        "severity": "critical",
+        "description": "Hardcoded AWS access key"
+    },
+    {
+        "line": 11,
+        "category": "security",
+        "severity": "high",
+        "description": "SQL injection via f-string"
+    }
+]
+```
+
+### Adding new eval cases:
+1. Create `fixtures/<name>.py` with the vulnerable/clean code
+2. Create `fixtures/<name>.expected.json` with expected findings
+3. Run `python -m app.eval.benchmark` to verify
+
+### Matching rules:
+- A finding matches an expected annotation if:
+  - The line numbers are within ±3 lines of each other
+  - The category (bug/security/style/performance) matches
+- This tolerance accounts for differences in how rules vs LLM
+  report line numbers (start of block vs specific line)
+"""
+
+
+# ---------------------------------------------------------------------------
+# Real-world acceptance rate tracker
+# ---------------------------------------------------------------------------
+
+class AcceptanceTracker:
+    """
+    Tracks whether review findings are acted on by developers.
+
+    This is a long-term quality signal: if developers consistently dismiss
+    our findings, we're probably producing false positives.
+
+    Usage:
+    - When a finding is posted as a PR comment, record it.
+    - When the PR is merged/closed, check if the finding was resolved.
+    - Periodically compute acceptance rate.
+
+    ASSUMPTION: This requires GitHub webhook events for issue_comment and
+    pull_request (closed). Not yet wired up — this is the data model.
+    """
+
+    def __init__(self):
+        self._findings: dict[str, dict[str, Any]] = {}
+
+    def record_posted_finding(self, review_id: str, finding_id: str, pr_url: str) -> None:
+        """Record that a finding was posted as a PR comment."""
+        self._findings[finding_id] = {
+            "review_id": review_id,
+            "pr_url": pr_url,
+            "posted_at": time.time(),
+            "resolved": None,  # None = unknown, True = acted on, False = dismissed
+        }
+
+    def record_resolution(self, finding_id: str, was_resolved: bool) -> None:
+        """Record whether a finding was acted on or dismissed."""
+        if finding_id in self._findings:
+            self._findings[finding_id]["resolved"] = was_resolved
+
+    def get_acceptance_rate(self) -> dict[str, Any]:
+        """Compute the acceptance rate across all tracked findings."""
+        total = len(self._findings)
+        resolved = sum(1 for f in self._findings.values() if f["resolved"] is True)
+        dismissed = sum(1 for f in self._findings.values() if f["resolved"] is False)
+        unknown = sum(1 for f in self._findings.values() if f["resolved"] is None)
+
+        return {
+            "total_posted": total,
+            "resolved": resolved,
+            "dismissed": dismissed,
+            "unknown": unknown,
+            "acceptance_rate": resolved / total if total > 0 else 0.0,
+        }
+
+
+# Singleton instance
+acceptance_tracker = AcceptanceTracker()

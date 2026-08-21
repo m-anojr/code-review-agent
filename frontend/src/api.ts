@@ -1,4 +1,4 @@
-import type { ReviewDetail, ReviewSummary, EvalReport } from './types';
+import type { ReviewDetail, ReviewSummary, EvalReport, HealthStatus } from './types';
 
 const API_BASE = '/api';
 
@@ -30,5 +30,11 @@ export async function submitReview(owner: string, repo: string, pr_number: numbe
 export async function fetchEvalReport(): Promise<EvalReport> {
   const res = await fetch(`${API_BASE}/eval`);
   if (!res.ok) throw new Error('Failed to fetch eval report');
+  return res.json();
+}
+
+export async function fetchHealth(): Promise<HealthStatus> {
+  const res = await fetch(`${API_BASE}/health`);
+  if (!res.ok) throw new Error('Failed to fetch health status');
   return res.json();
 }

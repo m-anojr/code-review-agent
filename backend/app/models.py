@@ -1,3 +1,11 @@
+"""
+Domain models — shared across the entire application.
+
+Extended from v1 to support:
+- Agent source type (in addition to rule/llm)
+- Confidence scores on findings
+- Webhook event models
+"""
 from __future__ import annotations
 
 import enum
@@ -33,7 +41,9 @@ class Finding(BaseModel):
     category: Category
     explanation: str
     suggested_fix: str
-    source: str = Field(..., pattern=r"^(rule|llm)$")
+    source: str = Field(..., pattern=r"^(rule|llm|agent)$")
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    reasoning_trace: str = ""  # Agent's reasoning for this finding
 
 
 class Hunk(BaseModel):
@@ -89,3 +99,13 @@ class EvalReport(BaseModel):
     f1: float
     total_fixtures: int
     details: list[EvalFixtureResult]
+
+
+# --- Webhook models ---
+
+class WebhookPayload(BaseModel):
+    """Minimal model for GitHub PR webhook events."""
+    action: str  # opened, synchronize, reopened
+    number: int  # PR number
+    pull_request: dict  # Full PR object from GitHub
+    repository: dict  # Repository info

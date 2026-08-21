@@ -1,5 +1,6 @@
 export type Severity = 'critical' | 'high' | 'medium' | 'low';
 export type Category = 'bug' | 'security' | 'style' | 'performance';
+export type Source = 'rule' | 'llm' | 'agent';
 
 export interface Finding {
   file: string;
@@ -9,7 +10,9 @@ export interface Finding {
   category: Category;
   explanation: string;
   suggested_fix: string;
-  source: string;
+  source: Source;
+  confidence: number;
+  reasoning_trace: string;
 }
 
 export interface Hunk {
@@ -65,4 +68,22 @@ export interface EvalReport {
   f1: number;
   total_fixtures: number;
   details: EvalFixtureResult[];
+}
+
+export interface HealthStatus {
+  status: string;
+  version: string;
+  environment: string;
+  agent_config: {
+    max_iterations: number;
+    confidence_threshold: number;
+    token_budget: number;
+  };
+  rate_limit_remaining: number;
+  monitor_stats: {
+    total_reviews: number;
+    empty_reviews: number;
+    agent_failures: number;
+    rule_only_reviews: number;
+  };
 }
