@@ -31,6 +31,7 @@ class ReviewRequest(BaseModel):
     owner: str = Field(..., min_length=1)
     repo: str = Field(..., min_length=1)
     pr_number: int = Field(..., gt=0)
+    github_token: str | None = None
 
 
 class Finding(BaseModel):

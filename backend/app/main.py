@@ -95,7 +95,7 @@ async def rate_limit_middleware(request: Request, call_next):
 @app.post("/api/reviews", response_model=ReviewDetail)
 async def create_review(request: ReviewRequest):
     """Trigger an agentic code review for a GitHub pull request."""
-    review_id = await trigger_review(request.owner, request.repo, request.pr_number)
+    review_id = await trigger_review(request.owner, request.repo, request.pr_number, request.github_token)
     return await db.get_review(review_id)
 
 
@@ -147,15 +147,15 @@ async def health_check():
 # Core review trigger — used by both REST API and webhook
 # ---------------------------------------------------------------------------
 
-async def trigger_review(owner: str, repo: str, pr_number: int) -> str:
+async def trigger_review(owner: str, repo: str, pr_number: int, github_token: str | None = None) -> str:
     """
     Trigger a full agentic review of a pull request.
     Shared logic used by both the REST API and the webhook handler.
     Returns the review ID.
     """
-    token = os.getenv("GITHUB_TOKEN", "")
+    token = github_token or os.getenv("GITHUB_TOKEN", "")
     if not token or token.startswith("ghp_xxxx"):
-        raise HTTPException(status_code=400, detail="GITHUB_TOKEN not configured. Set it in .env.")
+        raise HTTPException(status_code=400, detail="GITHUB_TOKEN not configured or provided.")
 
     client = GitHubClient(token)
     try:

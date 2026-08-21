@@ -14,11 +14,11 @@ export async function fetchReview(id: string): Promise<ReviewDetail> {
   return res.json();
 }
 
-export async function submitReview(owner: string, repo: string, pr_number: number): Promise<ReviewDetail> {
+export async function submitReview(owner: string, repo: string, pr_number: number, github_token?: string): Promise<ReviewDetail> {
   const res = await fetch(`${API_BASE}/reviews`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ owner, repo, pr_number }),
+    body: JSON.stringify({ owner, repo, pr_number, github_token }),
   });
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
