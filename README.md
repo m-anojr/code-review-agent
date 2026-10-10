@@ -2,43 +2,6 @@
 
 A local-first code review workspace for GitHub pull requests. Deterministic security checks run alongside an AI agent that can investigate changes with repository tools, then findings are presented in context against the original diff.
 
-## Architecture
-
-```mermaid
-flowchart TD
-    GH["GitHub Webhook"] --> WH["Webhook Handler"]
-    User(["Manual Trigger"]) --> API["FastAPI API"]
-    WH --> API
-
-    API --> RL["Rate Limiter"]
-    RL --> Rules["Pre-Filter: Deterministic Rules<br>Secrets / SQLi / Exceptions"]
-
-    Rules --> Retrieval["PR-Scoped Context<br>AST Chunking + BM25 Code Search"]
-    Retrieval --> Agent["Agent Loop (ReAct)"]
-
-    subgraph AgentLoop ["Agent Reasoning Loop"]
-        Agent --> Plan["Plan Investigation"]
-        Plan --> Tools["Call Tools"]
-        Tools --> Observe["Observe Results"]
-        Observe --> Plan
-    end
-
-    subgraph ToolBox ["Available Tools"]
-        Linter["Run Linter (Ruff)"]
-        Tests["Run Tests (Pytest)"]
-        Search["Search Codebase"]
-        Deps["Dependency Graph"]
-        Blame["Git Blame"]
-    end
-
-    Tools --> ToolBox
-
-    Agent --> Filter["Confidence Filter (≥0.7)"]
-    Filter --> Dedup["Merge & Deduplicate"]
-    Rules --> Dedup
-    Dedup --> Output["Post PR Comments / REST API"]
-    Dedup --> DB[("SQLite DB")]
-```
 
 ## Key Features
 
