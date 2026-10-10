@@ -13,6 +13,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -138,6 +139,18 @@ async def health_check():
             "confidence_threshold": settings.AGENT_CONFIDENCE_THRESHOLD,
             "token_budget": settings.AGENT_TOKEN_BUDGET,
         },
+        "llm_providers": {
+            "primary": {
+                "name": "Groq",
+                "configured": bool(settings.GROQ_API_KEY),
+                "model": settings.PRIMARY_MODEL,
+            },
+            "fallback": {
+                "name": "Gemini",
+                "configured": bool(settings.GEMINI_API_KEY),
+                "model": settings.FALLBACK_MODEL,
+            },
+        },
         "rate_limit_remaining": rate_limiter.remaining(),
         "monitor_stats": review_monitor.get_stats(),
     }
@@ -153,18 +166,47 @@ async def trigger_review(owner: str, repo: str, pr_number: int, github_token: st
     Shared logic used by both the REST API and the webhook handler.
     Returns the review ID.
     """
-    token = github_token or os.getenv("GITHUB_TOKEN", "")
-    if not token or token.startswith("ghp_xxxx"):
-        raise HTTPException(status_code=400, detail="GITHUB_TOKEN not configured or provided.")
+    token = (github_token or os.getenv("GITHUB_TOKEN", "")).strip()
+    if token.startswith("ghp_xxxx"):
+        token = ""
 
-    client = GitHubClient(token)
+    # Public repositories can be reviewed anonymously. A token is only needed
+    # when GitHub requires authentication, such as for a private repository.
+    client = GitHubClient(token or None)
     try:
         pr_info = await client.get_pr_info(owner, repo, pr_number)
         pr_title = pr_info.get("title", "")
         file_diffs = await client.fetch_pr_diff(owner, repo, pr_number)
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        logger.warning("GitHub rejected PR request with status %s for %s/%s#%s", status, owner, repo, pr_number)
+        if status == 404:
+            # A restricted token can hide an otherwise public repository from
+            # the authenticated API. Retry public PRs without credentials.
+            if token:
+                anonymous_client = GitHubClient()
+                try:
+                    pr_info = await anonymous_client.get_pr_info(owner, repo, pr_number)
+                    pr_title = pr_info.get("title", "")
+                    file_diffs = await anonymous_client.fetch_pr_diff(owner, repo, pr_number)
+                except httpx.HTTPError:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Pull request not found or the token cannot access this repository.",
+                    ) from e
+                finally:
+                    await anonymous_client.close()
+            else:
+                raise HTTPException(status_code=404, detail="Pull request not found or the token cannot access this repository.") from e
+        if status in (401, 403):
+            raise HTTPException(status_code=502, detail="GitHub denied access. Check the token permissions and API rate limit.") from e
+        raise HTTPException(status_code=502, detail=f"GitHub could not provide this pull request (HTTP {status}).") from e
+    except httpx.HTTPError as e:
+        logger.exception("GitHub connection failed for %s/%s#%s", owner, repo, pr_number)
+        raise HTTPException(status_code=502, detail="Could not connect to GitHub. Check your connection and try again.") from e
     except Exception as e:
-        logger.error("Failed to fetch PR: %s", e)
-        raise HTTPException(status_code=502, detail=f"Failed to fetch PR from GitHub: {e}")
+        logger.exception("Unexpected error while fetching %s/%s#%s", owner, repo, pr_number)
+        raise HTTPException(status_code=502, detail="Could not retrieve this pull request from GitHub.") from e
     finally:
         await client.close()
 

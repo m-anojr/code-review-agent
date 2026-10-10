@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import textwrap
+from dataclasses import dataclass
 from typing import Any
 
 from app.config import get_settings
@@ -18,6 +19,14 @@ from app.models import FileDiff, Finding, Severity, Category
 from app.tools import TOOL_SCHEMAS, TOOL_DISPATCH
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ReviewBudget:
+    """Token usage shared across every file in one pull request review."""
+
+    limit: int
+    used: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -32,7 +41,7 @@ SYSTEM_PROMPT = textwrap.dedent("""\
     ## How you work
     1. You receive a code diff and optional context (retrieved code, past findings).
     2. You PLAN what to investigate — think about what could go wrong.
-    3. You ACT by calling tools: run the linter, search the codebase for related
+    3. You ACT by calling tools: run the linter, search changed files for related
        code, check dependencies, or run a quick test.
     4. You OBSERVE tool results and decide if you need more information.
     5. When you have enough evidence, call `submit_review` with your findings.
@@ -45,6 +54,11 @@ SYSTEM_PROMPT = textwrap.dedent("""\
     - Focus on non-obvious issues that static linters would miss: logic bugs,
       race conditions, security vulnerabilities, resource leaks, missing error
       handling, incorrect API usage.
+    - Report only defects caused by this diff. Do not report hypothetical risks,
+      generic best-practice advice, or issues that already existed unchanged.
+    - Every finding must explain a concrete failure mode and why it is reachable.
+      If the evidence is incomplete, omit the finding.
+    - Keep the reasoning_trace to a brief evidence summary, not private chain-of-thought.
 
     ## Rules already applied
     You will be told which issues have already been detected by deterministic
@@ -61,7 +75,11 @@ SYSTEM_PROMPT = textwrap.dedent("""\
     ## Output format
     When done, call `submit_review` with a list of findings. Each finding needs:
     file, line_start, line_end, severity, category, confidence, explanation,
-    suggested_fix, and optionally reasoning_trace.
+    suggested_fix, and a short reasoning_trace describing the evidence checked.
+    Use the exact file path under review. The line_end must be an added line in
+    the supplied diff so the finding can be anchored to the pull request.
+    Keep line ranges as narrow as possible and submit each distinct root cause
+    once. An empty findings list is correct when the diff has no verified bug.
 """)
 
 
@@ -94,6 +112,8 @@ class ReviewAgent:
                 self._client = AsyncOpenAI(
                     api_key=settings.GROQ_API_KEY,
                     base_url="https://api.groq.com/openai/v1",
+                    timeout=90.0,
+                    max_retries=1,
                 )
                 self._model = settings.PRIMARY_MODEL
 
@@ -102,6 +122,8 @@ class ReviewAgent:
                 self._fallback_client = AsyncOpenAI(
                     api_key=settings.GEMINI_API_KEY,
                     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                    timeout=90.0,
+                    max_retries=1,
                 )
                 self._fallback_model = settings.FALLBACK_MODEL
 
@@ -115,6 +137,7 @@ class ReviewAgent:
         file_diff: FileDiff,
         rule_findings: list[Finding],
         retrieved_context: str = "",
+        budget: ReviewBudget | None = None,
     ) -> list[Finding]:
         """
         Run the full agent loop on a single file diff.
@@ -122,7 +145,7 @@ class ReviewAgent:
         Args:
             file_diff: The parsed diff for one file.
             rule_findings: Findings already detected by deterministic rules.
-            retrieved_context: Relevant code/docs from the vector store.
+            retrieved_context: Relevant code from other files changed in this PR.
 
         Returns:
             List of agent-generated findings (confidence-filtered).
@@ -132,6 +155,7 @@ class ReviewAgent:
             return []
 
         settings = get_settings()
+        budget = budget or ReviewBudget(settings.AGENT_TOKEN_BUDGET)
         diff_text = _format_diff(file_diff)
         if not diff_text.strip():
             return []
@@ -148,19 +172,18 @@ class ReviewAgent:
         ]
 
         # ReAct loop
-        total_tokens = 0
         for iteration in range(settings.AGENT_MAX_ITERATIONS):
             logger.info(
                 "Agent iteration %d/%d for %s (tokens used: %d)",
                 iteration + 1, settings.AGENT_MAX_ITERATIONS,
-                file_diff.filename, total_tokens,
+                file_diff.filename, budget.used,
             )
 
             # Check token budget
-            if total_tokens >= settings.AGENT_TOKEN_BUDGET:
+            if budget.used >= budget.limit:
                 logger.warning(
                     "Token budget exhausted (%d/%d) for %s",
-                    total_tokens, settings.AGENT_TOKEN_BUDGET, file_diff.filename,
+                    budget.used, budget.limit, file_diff.filename,
                 )
                 break
 
@@ -171,7 +194,7 @@ class ReviewAgent:
 
             # Track token usage
             if hasattr(response, "usage") and response.usage:
-                total_tokens += (response.usage.total_tokens or 0)
+                budget.used += response.usage.total_tokens or 0
 
             assistant_message = response.choices[0].message
 
@@ -206,6 +229,7 @@ class ReviewAgent:
                                 args.get("findings", []),
                                 file_diff.filename,
                                 settings.AGENT_CONFIDENCE_THRESHOLD,
+                                _added_line_numbers(file_diff),
                             )
                         except (json.JSONDecodeError, Exception) as e:
                             logger.warning("Failed to parse submit_review: %s", e)
@@ -291,7 +315,12 @@ class ReviewAgent:
                 )
                 return response
             except Exception as e:
-                logger.warning("Primary LLM failed: %s, trying fallback", e)
+                logger.warning(
+                    "Groq request failed for model %s (%s, HTTP %s); trying Gemini",
+                    self._model,
+                    type(e).__name__,
+                    getattr(e, "status_code", "n/a"),
+                )
 
         # Try fallback
         if self._fallback_client:
@@ -304,7 +333,12 @@ class ReviewAgent:
                 )
                 return response
             except Exception as e:
-                logger.error("Fallback LLM also failed: %s", e)
+                logger.error(
+                    "Gemini request failed for model %s (%s, HTTP %s)",
+                    self._fallback_model,
+                    type(e).__name__,
+                    getattr(e, "status_code", "n/a"),
+                )
 
         return None
 
@@ -332,15 +366,23 @@ class ReviewAgent:
         raw_findings: list[dict],
         filename: str,
         confidence_threshold: float,
+        added_lines: set[int] | None = None,
     ) -> list[Finding]:
         """
         Parse and filter agent findings. Only keeps findings above the
         confidence threshold. This is the precision-first gate.
         """
+        if not isinstance(raw_findings, list):
+            return []
         findings = []
         for rf in raw_findings:
             try:
                 confidence = rf.get("confidence", 0.5)
+                if isinstance(confidence, bool) or not isinstance(confidence, (int, float)):
+                    continue
+                confidence = float(confidence)
+                if not 0.0 <= confidence <= 1.0:
+                    continue
 
                 # PRECISION GATE: Drop low-confidence findings
                 if confidence < confidence_threshold:
@@ -351,20 +393,50 @@ class ReviewAgent:
                     )
                     continue
 
+                finding_file = rf.get("file", filename)
+                line_start = rf["line_start"]
+                line_end = rf["line_end"]
+                explanation_raw = rf.get("explanation", "")
+                suggested_fix_raw = rf.get("suggested_fix", "")
+                reasoning_raw = rf.get("reasoning_trace", "")
+                if finding_file != filename:
+                    logger.info("Dropping finding for unexpected file %r while reviewing %s", finding_file, filename)
+                    continue
+                if (
+                    isinstance(line_start, bool)
+                    or isinstance(line_end, bool)
+                    or not isinstance(line_start, int)
+                    or not isinstance(line_end, int)
+                    or line_start < 1
+                    or line_end < line_start
+                    or (added_lines is not None and line_end not in added_lines)
+                ):
+                    logger.info("Dropping finding with invalid or unchanged line range in %s", filename)
+                    continue
+                if not isinstance(explanation_raw, str) or not explanation_raw.strip():
+                    continue
+                if not isinstance(suggested_fix_raw, str):
+                    continue
+
                 # SECURITY: Never echo secrets back in findings
-                explanation = _sanitize_finding_text(rf.get("explanation", ""))
-                suggested_fix = _sanitize_finding_text(rf.get("suggested_fix", ""))
+                explanation = _sanitize_finding_text(explanation_raw)[:4000]
+                suggested_fix = _sanitize_finding_text(suggested_fix_raw)[:4000]
+                reasoning_trace = _sanitize_finding_text(
+                    reasoning_raw if isinstance(reasoning_raw, str) else ""
+                )[:1000]
 
                 findings.append(
                     Finding(
-                        file=rf.get("file", filename),
-                        line_start=rf["line_start"],
-                        line_end=rf["line_end"],
+                        file=finding_file,
+                        line_start=line_start,
+                        line_end=line_end,
                         severity=Severity(rf["severity"]),
                         category=Category(rf["category"]),
                         explanation=explanation,
                         suggested_fix=suggested_fix,
                         source="agent",
+                        confidence=confidence,
+                        reasoning_trace=reasoning_trace,
                     )
                 )
             except (KeyError, ValueError) as e:
@@ -397,12 +469,28 @@ def _format_diff(file_diff: FileDiff) -> str:
     return "\n".join(parts)
 
 
+def _added_line_numbers(file_diff: FileDiff) -> set[int]:
+    """Return new-side line numbers that were actually added by this change."""
+    added: set[int] = set()
+    for hunk in file_diff.hunks:
+        line_number = hunk.new_start
+        for line in hunk.lines:
+            if line.startswith("+") and not line.startswith("+++"):
+                added.add(line_number)
+                line_number += 1
+            elif not line.startswith("-"):
+                line_number += 1
+    return added
+
+
 def _sanitize_finding_text(text: str) -> str:
     """
     Remove potential secrets from finding text. The agent is instructed not
     to echo them, but this is a defense-in-depth measure.
     """
     import re
+    if not isinstance(text, str):
+        return ""
     # Redact anything that looks like a key/token/password value
     patterns = [
         (r'(AKIA[0-9A-Z]{16})', '[REDACTED_AWS_KEY]'),

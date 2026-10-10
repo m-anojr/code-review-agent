@@ -22,7 +22,7 @@ export default function EvalReport() {
     <div className="p-8 max-w-5xl mx-auto w-full">
       <h2 className="text-xl font-medium text-text-primary mb-6">Evaluation Report</h2>
 
-      <div className="grid grid-cols-4 gap-4 mb-8">
+      <div className="mb-8 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <div className="border border-border bg-surface-raised p-4 rounded-md">
           <div className="text-sm text-text-secondary mb-1">Total Fixtures</div>
           <div className="text-2xl font-mono text-text-primary">{report.total_fixtures}</div>

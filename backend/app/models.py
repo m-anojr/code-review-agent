@@ -28,10 +28,10 @@ class Category(str, enum.Enum):
 
 
 class ReviewRequest(BaseModel):
-    owner: str = Field(..., min_length=1)
-    repo: str = Field(..., min_length=1)
-    pr_number: int = Field(..., gt=0)
-    github_token: str | None = None
+    owner: str = Field(..., min_length=1, max_length=39, pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$")
+    repo: str = Field(..., min_length=1, max_length=100, pattern=r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,98}[A-Za-z0-9])?$")
+    pr_number: int = Field(..., gt=0, le=2_147_483_647)
+    github_token: str | None = Field(default=None, max_length=512)
 
 
 class Finding(BaseModel):

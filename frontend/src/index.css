@@ -5,12 +5,32 @@
 @layer base {
   body {
     @apply bg-surface text-text-primary antialiased;
+    font-feature-settings: 'ss01' on;
+  }
+
+  :focus-visible {
+    outline: 2px solid #58a6ff;
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: rgba(88, 166, 255, 0.28);
+    color: #e6edf3;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      scroll-behavior: auto !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
 
 @layer components {
   .btn {
-    @apply inline-flex items-center justify-center px-4 py-2 text-sm font-medium transition-colors border rounded-md disabled:opacity-50 disabled:pointer-events-none;
+    @apply inline-flex items-center justify-center rounded-md border px-4 py-2 text-sm font-medium transition-colors disabled:pointer-events-none disabled:opacity-50;
   }
   .btn-primary {
     @apply bg-surface-raised border-border hover:bg-surface-overlay text-text-primary;

@@ -15,15 +15,17 @@ _MAX_DIFF_LINES_PER_FILE = 3000
 class GitHubClient:
     """Fetches PR diffs and optionally posts review comments via the GitHub REST API."""
 
-    def __init__(self, token: str):
+    def __init__(self, token: str | None = None):
         self._token = token
+        headers = {
+            "Accept": "application/vnd.github.v3+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         self._client = httpx.AsyncClient(
             base_url="https://api.github.com",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github.v3+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
+            headers=headers,
             timeout=30.0,
         )
 

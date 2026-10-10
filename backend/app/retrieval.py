@@ -1,16 +1,14 @@
-"""
-Retrieval layer: AST-aware code chunking and vector search.
-
-Indexes repository code into ChromaDB for semantic retrieval during agent review.
-Uses sentence-transformers for local embedding (no API cost).
-"""
+"""Request-scoped AST chunking and code-aware retrieval for changed PR files."""
 from __future__ import annotations
 
 import ast
 import hashlib
 import logging
+import math
 import re
-from pathlib import Path
+from collections import Counter
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -103,54 +101,34 @@ def chunk_file(source: str, filename: str) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Vector store — ChromaDB with sentence-transformers embeddings
+# Request-scoped changed-file index
 # ---------------------------------------------------------------------------
 
-_collection = None  # Lazy-initialized ChromaDB collection
+_review_chunks: ContextVar[dict[str, dict[str, Any]] | None] = ContextVar(
+    "review_chunks", default=None
+)
+
+_CODE_STOPWORDS = {
+    "and", "are", "as", "async", "await", "bool", "class", "def", "else",
+    "false", "for", "from", "if", "import", "in", "is", "none", "not",
+    "or", "pass", "return", "self", "true", "try", "while", "with",
+}
 
 
-def _get_collection():
-    """Lazy-initialize the ChromaDB collection with sentence-transformers."""
-    global _collection
-    if _collection is not None:
-        return _collection
-
+@contextmanager
+def review_index_scope():
+    """Create an isolated, lightweight code index for one PR review."""
+    token = _review_chunks.set({})
     try:
-        import chromadb
-        from chromadb.utils import embedding_functions
-
-        from app.config import get_settings
-        settings = get_settings()
-
-        ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name=settings.EMBEDDING_MODEL
-        )
-        client = chromadb.Client()  # In-memory for simplicity; use PersistentClient for prod
-        _collection = client.get_or_create_collection(
-            name="codebase",
-            embedding_function=ef,
-            metadata={"hnsw:space": "cosine"},
-        )
-        return _collection
-    except ImportError:
-        logger.warning(
-            "chromadb or sentence-transformers not installed. "
-            "Retrieval will be unavailable. Install with: "
-            "pip install chromadb sentence-transformers"
-        )
-        return None
-    except Exception as e:
-        logger.warning("Failed to initialize ChromaDB: %s", e)
-        return None
+        yield
+    finally:
+        _review_chunks.reset(token)
 
 
 def index_chunks(chunks: list[dict[str, Any]]) -> int:
-    """
-    Add code chunks to the vector store. Returns number of chunks indexed.
-    Deduplicates by content hash to avoid re-indexing unchanged code.
-    """
-    collection = _get_collection()
-    if collection is None:
+    """Add code chunks to the active PR index, deduplicated by content hash."""
+    scoped_index = _review_chunks.get()
+    if scoped_index is None:
         return 0
 
     ids = []
@@ -177,12 +155,9 @@ def index_chunks(chunks: list[dict[str, Any]]) -> int:
     if not ids:
         return 0
 
-    try:
-        collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
-        return len(ids)
-    except Exception as e:
-        logger.warning("Failed to index chunks: %s", e)
-        return 0
+    for chunk_id, document, metadata in zip(ids, documents, metadatas):
+        scoped_index[chunk_id] = {"content": document, **metadata}
+    return len(ids)
 
 
 def index_file(source: str, filename: str) -> int:
@@ -191,60 +166,61 @@ def index_file(source: str, filename: str) -> int:
     return index_chunks(chunks)
 
 
-def index_past_findings(findings: list[dict[str, Any]]) -> int:
-    """
-    Index past review findings so the agent can learn from history.
-    Each finding becomes a searchable document with its explanation.
-    """
-    chunks = []
-    for f in findings:
-        content = (
-            f"Past finding in {f.get('file', 'unknown')}: "
-            f"[{f.get('severity', 'unknown')}] {f.get('category', 'unknown')} — "
-            f"{f.get('explanation', '')}"
-        )
-        chunks.append({
-            "content": content,
-            "file": f.get("file", "unknown"),
-            "type": "past_finding",
-            "line_start": f.get("line_start", 0),
-            "line_end": f.get("line_end", 0),
-        })
-    return index_chunks(chunks)
-
-
 def search_index(query: str, top_k: int = 3) -> list[dict[str, Any]]:
-    """
-    Search the vector store for chunks semantically similar to the query.
-    Returns a list of dicts with 'content', 'file', 'score' keys.
-    """
-    collection = _get_collection()
-    if collection is None:
+    """Rank chunks from this PR's changed files with BM25 identifier matching."""
+    scoped_index = _review_chunks.get()
+    if scoped_index is None:
+        return []
+    query_terms = _search_terms(query)
+    if not query_terms:
         return []
 
-    try:
-        results = collection.query(query_texts=[query], n_results=top_k)
-        if not results or not results["documents"]:
-            return []
+    documents = [
+        (item, Counter(_search_term_list(item["content"])))
+        for item in scoped_index.values()
+    ]
+    if not documents:
+        return []
 
-        output = []
-        for i, doc in enumerate(results["documents"][0]):
-            meta = results["metadatas"][0][i] if results["metadatas"] else {}
-            distance = results["distances"][0][i] if results["distances"] else 1.0
-            output.append({
-                "content": doc,
-                "file": meta.get("file", "unknown"),
-                "score": 1.0 - distance,  # Convert distance to similarity
-                "line_start": meta.get("line_start", 0),
-                "line_end": meta.get("line_end", 0),
+    document_frequency = {
+        term: sum(term in frequencies for _, frequencies in documents)
+        for term in query_terms
+    }
+    average_length = sum(sum(frequencies.values()) for _, frequencies in documents) / len(documents) or 1
+    matches = []
+    for item, frequencies in documents:
+        length = sum(frequencies.values()) or 1
+        score = 0.0
+        for term in query_terms:
+            frequency = frequencies.get(term, 0)
+            if not frequency:
+                continue
+            inverse_frequency = math.log(1 + (len(documents) - document_frequency[term] + 0.5) / (document_frequency[term] + 0.5))
+            score += inverse_frequency * (frequency * 2.2) / (frequency + 1.2 * (0.25 + 0.75 * length / average_length))
+        if score > 0:
+            matches.append({
+                "content": item["content"],
+                "file": item["file"],
+                "score": score,
+                "line_start": item.get("line_start", 0),
+                "line_end": item.get("line_end", 0),
             })
-        return output
-    except Exception as e:
-        logger.warning("Search failed: %s", e)
-        return []
+    matches.sort(key=lambda item: item["score"], reverse=True)
+    return matches[:max(1, min(top_k, 10))]
 
 
-def clear_index() -> None:
-    """Reset the vector store. Useful for re-indexing."""
-    global _collection
-    _collection = None
+def _search_term_list(text: str) -> list[str]:
+    """Split code identifiers into normalized tokens for retrieval."""
+    terms: list[str] = []
+    for identifier in re.findall(r"[A-Za-z][A-Za-z0-9_]*", text):
+        parts = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", identifier).replace("_", " ").split()
+        terms.extend(
+            part.casefold()
+            for part in parts
+            if len(part) >= 3 and part.casefold() not in _CODE_STOPWORDS
+        )
+    return terms
+
+
+def _search_terms(text: str) -> set[str]:
+    return set(_search_term_list(text))

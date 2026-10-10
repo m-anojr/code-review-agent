@@ -79,6 +79,10 @@ export interface HealthStatus {
     confidence_threshold: number;
     token_budget: number;
   };
+  llm_providers: {
+    primary: { name: string; configured: boolean; model: string };
+    fallback: { name: string; configured: boolean; model: string };
+  };
   rate_limit_remaining: number;
   monitor_stats: {
     total_reviews: number;

@@ -4,7 +4,7 @@
 
 The system upgrades from a single-shot LLM call to an **agentic loop** where the
 agent plans its own investigation, calls tools (linters, test runners, git blame,
-dependency graph, AST search), retrieves relevant context from a vector store,
+dependency graph, AST search), retrieves relevant context from changed files,
 and only produces a verdict once it has gathered enough evidence. Deterministic
 rules run as a **pre-filter** — high-confidence, zero-cost findings that the
 agent does not need to re-discover.
@@ -24,8 +24,7 @@ GitHub Webhook (PR event)
   ┌─────────────────────┐
   │  Retrieval Layer    │  1. Fetch PR diff via GitHub API
   │                     │  2. AST-chunk changed files + surrounding context
-  │                     │  3. Query vector store for related code, past PR
-  │                     │     comments, style guide snippets
+  │                     │  3. Rank related chunks from this PR's changed files
   └────────┬────────────┘
            │
            ▼
@@ -65,7 +64,7 @@ GitHub Webhook (PR event)
 
 The agent uses a **ReAct** (Reason + Act) loop:
 - **Max iterations**: 5 (configurable). Prevents runaway token spend.
-- **Token budget**: 32k tokens per PR (configurable). Tracked per-call.
+- **Token budget**: 32k tokens per PR (configurable), shared across every changed file.
 - **Completion signal**: The agent calls a `submit_review` tool when it's done,
   or the loop ends when max iterations / budget is hit.
 - **Tool choice**: The LLM decides which tool to call based on the diff content.
@@ -77,22 +76,30 @@ The agent uses a **ReAct** (Reason + Act) loop:
 | Tool | Description | When Used |
 |------|-------------|-----------|
 | `run_linter` | Run Ruff/flake8 on changed files | Always, first iteration |
-| `run_tests` | Execute pytest in sandboxed container | When agent suspects logic bug |
+| `run_tests` | Execute pytest in an isolated temporary directory with a timeout | When agent suspects logic bug |
 | `git_blame` | Show who last changed a code region | When assessing intent/history |
-| `search_codebase` | AST-aware search in repo context | When agent needs surrounding code |
+| `search_codebase` | Search changed-file chunks for related identifiers | When agent needs call-site context |
 | `get_dependencies` | Show import graph for a file | When checking impact of changes |
 | `submit_review` | Finalize and output findings | Agent calls when done |
 
 ## Retrieval Layer
 
-- **Chunking**: AST-aware — split by function/class/module boundaries, not
-  fixed character windows. Falls back to line-based chunking for non-Python.
-- **Embedding**: `text-embedding-3-small` via OpenAI-compatible API (Groq doesn't
-  serve embeddings, so we use a local sentence-transformers model as default).
-- **Vector store**: ChromaDB (embedded, file-based). Zero infrastructure.
-  Re-indexes on each PR by diffing the changed file list.
-- **Sources indexed**: Changed files' full context, past review findings from
-  the SQLite DB, and any `.md` style guide files in the repo root.
+- **Chunking**: AST-aware for Python functions/classes and line-based for other
+  files. Diff context is indexed for the current pull request only.
+- **Ranking**: BM25 over normalized identifiers from changed-file chunks. This
+  is lightweight and deterministic, with no embedding model download.
+- **Isolation**: A context-local index exists only during one review. It cannot
+  return stale chunks from an earlier or concurrent pull request.
+- **Scope**: Searches changed files only. It does not fetch the full repository
+  tree, old findings, or style guide files.
+
+## Finding Quality Gates
+
+- Preserve the model's confidence and short evidence summary with each finding.
+- Accept AI findings only for the file currently under review and only when the
+  reported end line is an added line in that file's diff.
+- Deduplicate overlapping findings with the same category while giving
+  deterministic rule findings priority.
 
 ## Output Schema
 
@@ -119,9 +126,9 @@ The agent uses a **ReAct** (Reason + Act) loop:
    LLM second-guessing known-good detections.
 2. **Precision > Recall**: Confidence threshold defaults to 0.7. Better to miss
    a style nit than post a false positive that erodes developer trust.
-3. **ChromaDB over Pinecone/Weaviate**: Zero infrastructure, embedded mode,
-   sufficient for single-repo analysis. ASSUMPTION: Single-repo, not multi-tenant.
+3. **Request-scoped context retrieval**: Rank code from changed files without a
+   global index, model download, or cross-review state leakage.
 4. **Groq as primary LLM**: Free tier, fastest inference, good tool-use support.
    Gemini as fallback. ASSUMPTION: Small team, cost-sensitive.
-5. **Sandboxed execution via subprocess + tempdir**: No Docker-in-Docker needed
-   for linting. Test execution uses isolated temp directories with timeouts.
+5. **Sandboxed execution via subprocess + tempdir**: Linting and tests run in
+   isolated temporary directories with timeouts.

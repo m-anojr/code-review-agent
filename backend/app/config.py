@@ -22,19 +22,15 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     GEMINI_API_KEY: str = ""
 
-    # ASSUMPTION: Groq is primary (free, fast), Gemini is fallback.
+    # Groq is primary; Gemini's OpenAI-compatible API is the fallback.
     PRIMARY_MODEL: str = "openai/gpt-oss-120b"
-    FALLBACK_MODEL: str = "qwen/qwen3.6-27b"
+    FALLBACK_MODEL: str = "gemini-3.8-flash"
 
     # --- Agent ---
     AGENT_MAX_ITERATIONS: int = 5  # Max ReAct loop iterations per file
     AGENT_TOKEN_BUDGET: int = 32000  # Max tokens per PR review
     AGENT_CONFIDENCE_THRESHOLD: float = 0.7  # Drop findings below this
     AGENT_TEMPERATURE: float = 0.0  # Deterministic output
-
-    # --- Retrieval ---
-    CHROMA_PERSIST_DIR: str = "./data/chroma"
-    EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"  # sentence-transformers model
 
     # --- Sandboxing ---
     SANDBOX_TIMEOUT_SECONDS: int = 30  # Max execution time for linter/tests
@@ -52,7 +48,6 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     CORS_ORIGINS: list[str] = [
         "http://localhost:3000",
-        "http://localhost:3001",
         "http://localhost:5173",
     ]
 

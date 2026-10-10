@@ -4,17 +4,22 @@ import json
 import os
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 import aiosqlite
 
 from app.models import Finding, ReviewSummary, ReviewDetail, FileDiff, Severity
 
-_DB_PATH = os.getenv("DB_PATH", "reviews.db")
+def _db_path() -> str:
+    """Return the configured database path, creating its parent directory."""
+    path = Path(os.getenv("DB_PATH", "reviews.db"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return str(path)
 
 
 async def init_db() -> None:
     """Create the reviews table if it does not exist."""
-    async with aiosqlite.connect(_DB_PATH) as db:
+    async with aiosqlite.connect(_db_path()) as db:
         await db.execute(
             """
             CREATE TABLE IF NOT EXISTS reviews (
@@ -48,7 +53,7 @@ async def save_review(
     findings_json = json.dumps([f.model_dump() for f in findings])
     diffs_json = json.dumps([d.model_dump() for d in file_diffs])
 
-    async with aiosqlite.connect(_DB_PATH) as db:
+    async with aiosqlite.connect(_db_path()) as db:
         await db.execute(
             """
             INSERT INTO reviews (id, owner, repo, pr_number, pr_title, created_at, findings_json, file_diffs_json, files_analyzed)
@@ -63,7 +68,7 @@ async def save_review(
 
 async def get_reviews() -> list[ReviewSummary]:
     """Return all reviews ordered by creation date descending."""
-    async with aiosqlite.connect(_DB_PATH) as db:
+    async with aiosqlite.connect(_db_path()) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT id, owner, repo, pr_number, pr_title, created_at, findings_json, files_analyzed FROM reviews ORDER BY created_at DESC"
@@ -91,7 +96,7 @@ async def get_reviews() -> list[ReviewSummary]:
 
 async def get_review(review_id: str) -> ReviewDetail | None:
     """Return full detail for a single review, or None if not found."""
-    async with aiosqlite.connect(_DB_PATH) as db:
+    async with aiosqlite.connect(_db_path()) as db:
         db.row_factory = aiosqlite.Row
         cursor = await db.execute(
             "SELECT id, owner, repo, pr_number, pr_title, created_at, findings_json, file_diffs_json, files_analyzed FROM reviews WHERE id = ?",

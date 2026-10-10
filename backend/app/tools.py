@@ -77,10 +77,10 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "function": {
             "name": "search_codebase",
             "description": (
-                "Search the repository codebase for relevant code snippets using "
-                "semantic search. Returns the most relevant code chunks. Use this "
-                "when you need to understand how a function is used elsewhere, or "
-                "to find related implementations."
+                "Search the other changed files in this pull request for related "
+                "code using identifier-aware ranking. This index contains only "
+                "the current pull request's changed files, not the full repository. "
+                "Use this to inspect related implementations or call sites."
             ),
             "parameters": {
                 "type": "object",
@@ -280,12 +280,12 @@ def tool_run_tests(test_code: str) -> str:
 
 
 def tool_search_codebase(query: str, top_k: int = 3) -> str:
-    """Search the vector store for relevant code. Returns formatted results."""
+    """Search this review's changed-file context and format relevant results."""
     try:
         from app.retrieval import search_index
         results = search_index(query, top_k=top_k)
         if not results:
-            return "No relevant code found in the index."
+            return "No related code found in the changed files for this pull request."
         parts = []
         for i, r in enumerate(results, 1):
             parts.append(f"--- Result {i} (score: {r['score']:.3f}) ---")
