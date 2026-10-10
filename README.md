@@ -2,20 +2,6 @@
 
 A local-first code review workspace for GitHub pull requests. Deterministic security checks run alongside an AI agent that can investigate changes with repository tools, then findings are presented in context against the original diff.
 
-## Screenshots
-
-| Submit New Review | Code Diff Viewer |
-| :---: | :---: |
-| ![Submit Review](screenshots/1.png) | ![Diff View](screenshots/2.png) |
-| **Evaluation Suite** | **Inline AI Findings** |
-| ![Eval Metrics](screenshots/3.png) | ![Inline Findings](screenshots/4.png) |
-
-<br>
-<p align="center">
-  <b>Reviews Dashboard</b><br>
-  <img src="screenshots/5.png" width="100%" />
-</p>
-
 ## Architecture
 
 ```mermaid
